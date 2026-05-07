@@ -1,4 +1,4 @@
-# react-native-nitro-template
+# react-native-nitro-cardinal-direction
 
 This is a React Native nitro module that allows realtime updates for the magnetic cardinal direction the user is currently facing in.
 
