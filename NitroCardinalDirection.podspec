@@ -27,5 +27,6 @@ Pod::Spec.new do |s|
 
   s.dependency 'React-jsi'
   s.dependency 'React-callinvoker'
+  s.frameworks = 'CoreMotion'
   install_modules_dependencies(s)
 end

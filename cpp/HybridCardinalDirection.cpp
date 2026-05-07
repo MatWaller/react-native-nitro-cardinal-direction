@@ -1,3 +1,6 @@
+// Android-only implementation. iOS is implemented in ios/HybridCardinalDirection.mm
+#ifdef __ANDROID__
+
 #include <android/sensor.h>
 #include <android/looper.h>
 #include <thread>
@@ -139,3 +142,5 @@ namespace margelo::nitro::nitrocardinaldirection {
     _callback = nullptr;
   }
 } // namespace margelo::nitro::nitrocardinaldirection
+
+#endif // __ANDROID__
