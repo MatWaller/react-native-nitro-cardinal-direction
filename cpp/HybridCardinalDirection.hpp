@@ -36,6 +36,7 @@ namespace margelo::nitro::nitrocardinaldirection {
     float lastMag[3]{0, 0, 0};
     float prevAcceleration[3]{0, 0, 0};
     float prevMag[3]{0, 0, 0};
+    int _displayRotation{0};
     static constexpr float ACCEL_THRESHOLD = 0.5f;
     static constexpr float MAG_THRESHOLD = 5.0f;
 #endif

@@ -3,14 +3,43 @@
 
 #include <android/sensor.h>
 #include <android/looper.h>
+
 #include <thread>
 #include <cmath>
+#include <jni.h>
+
+// Store JavaVM pointer globally
+JavaVM* g_JavaVM = nullptr;
 
 #include "HybridCardinalDirection.hpp"
 
 #define SENSOR_LOOPER_ID 1
 
 namespace margelo::nitro::nitrocardinaldirection {
+
+  /*
+   * Get orientation correction angle based on current device rotation.
+   * Returns the angle to add to the heading to account for how the phone is rotated.
+   * 
+   * Surface.ROTATION_0 (Portrait) = 0
+   * Surface.ROTATION_90 (Landscape Left) = 90
+   * Surface.ROTATION_180 (Portrait Upside Down) = 180
+   * Surface.ROTATION_270 (Landscape Right) = 270
+   */
+  static float getOrientationCorrection(int displayRotation) {
+    switch (displayRotation) {
+      case 0:   // Surface.ROTATION_0 (Portrait)
+        return 0.0f;
+      case 1:   // Surface.ROTATION_90 (Landscape Left)
+        return 90.0f;
+      case 2:   // Surface.ROTATION_180 (Portrait Upside Down)
+        return 180.0f;
+      case 3:   // Surface.ROTATION_270 (Landscape Right)
+        return 270.0f;
+      default:
+        return 0.0f;
+    }
+  }
 
   float HybridCardinalDirection::calculateAzimuth(const float* accel, const float* mag) {
     // Normalize accelerometer vector (gravity)
@@ -72,6 +101,8 @@ namespace margelo::nitro::nitrocardinaldirection {
     
     _accelerometer = ASensorManager_getDefaultSensor(_sensorManager, ASENSOR_TYPE_ACCELEROMETER);
     _magnet = ASensorManager_getDefaultSensor(_sensorManager, ASENSOR_TYPE_MAGNETIC_FIELD);
+    
+    _displayRotation = 0;
 
     std::thread([this]() {
       ALooper* looper = ALooper_prepare(ALOOPER_PREPARE_ALLOW_NON_CALLBACKS);
@@ -84,6 +115,10 @@ namespace margelo::nitro::nitrocardinaldirection {
       ASensorEventQueue_setEventRate(_sensorEventQueue, _accelerometer, 100000); // 100ms
 
       ASensorEvent event;
+
+
+      JNIEnv* env = nullptr;
+
       while (_isListening) {
         if (ALooper_pollOnce(100, nullptr, nullptr, nullptr) == SENSOR_LOOPER_ID) {
           while (ASensorEventQueue_getEvents(_sensorEventQueue, &event, 1) > 0) {
@@ -114,14 +149,44 @@ namespace margelo::nitro::nitrocardinaldirection {
                }
 
                if (shouldUpdate) {
+                 // Fetch display rotation from OrientationHelper via JNI
+
+                 int rotation = 0;
+                 if (g_JavaVM) {
+                   jint getEnvStat = g_JavaVM->GetEnv((void**)&env, JNI_VERSION_1_6);
+                   bool didAttach = false;
+                   if (getEnvStat == JNI_EDETACHED) {
+                     if (g_JavaVM->AttachCurrentThread(&env, nullptr) == 0) {
+                       didAttach = true;
+                     }
+                   }
+                   if (env) {
+                     jclass helperClass = env->FindClass("com/margelo/nitro/nitrocardinaldirection/OrientationHelper");
+                     if (helperClass) {
+                       jmethodID getRotation = env->GetStaticMethodID(helperClass, "getDisplayRotation", "()I");
+                       if (getRotation) {
+                         rotation = env->CallStaticIntMethod(helperClass, getRotation);
+                       }
+                       env->DeleteLocalRef(helperClass);
+                     }
+                   }
+                   if (didAttach) {
+                     g_JavaVM->DetachCurrentThread();
+                   }
+                 }
+                 _displayRotation = rotation;
+
                  float azimuth = calculateAzimuth(lastAcceleration, lastMag);
+                 // Apply orientation correction to account for device rotation (portrait vs landscape)
+                 float correction = getOrientationCorrection(_displayRotation);
+                 azimuth += correction;
+                 if (azimuth >= 360.0f) azimuth -= 360.0f;
                  std::string cardinal = degreesToCardinal(azimuth);
                  SensorData data(
                    static_cast<double>(event.timestamp / 1e9),
                    static_cast<double>(azimuth),
                    cardinal
                  );
-
                  _callback(data);
                }
             }

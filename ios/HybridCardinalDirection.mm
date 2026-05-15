@@ -1,20 +1,56 @@
 #include "HybridCardinalDirection.hpp"
 #import <CoreMotion/CoreMotion.h>
+#import <UIKit/UIKit.h>
 #include <cmath>
 
 namespace margelo::nitro::nitrocardinaldirection {
 
+  /*
+   * Get orientation correction angle based on current device orientation.
+   * Returns the angle to add to the heading to account for how the phone is rotated.
+   */
+  static float getOrientationCorrection() {
+    UIDeviceOrientation orientation = [UIDevice currentDevice].orientation;
+    switch (orientation) {
+      case UIDeviceOrientationPortrait:
+        return 0.0f;
+      case UIDeviceOrientationLandscapeLeft:
+        return 90.0f;
+      case UIDeviceOrientationLandscapeRight:
+        return 270.0f; // or -90.0f
+      case UIDeviceOrientationPortraitUpsideDown:
+        return 180.0f;
+      default:
+        // Unknown orientation, assume portrait
+        return 0.0f;
+    }
+  }
+
+ /*
+     * MW - Convert degrees to cardinal direction (N, NE, E, SE, S, SW, W, NW)
+     * 0 = N, 45 = NE, 90 = E, etc.
+     * Each direction covers a 45 range centered on its angle (e.g. N is 337.5–22.5)
+     * Adding 22.5 before dividing by 45 ensures correct rounding to nearest direction.
+     * Modulo 8 wraps around from NW back to N.
+ */
   static std::string degreesToCardinalStatic(float degrees) {
     static const char* directions[] = {"N", "NE", "E", "SE", "S", "SW", "W", "NW"};
     int index = static_cast<int>((degrees + 22.5f) / 45.0f) % 8;
     return directions[index];
   }
 
-  // Delegate degreesToCardinal to the shared static helper
+  /* 
+    * Instance method that calls the static method. This allows the public API to be non-static while still using the same logic.
+  */
   std::string HybridCardinalDirection::degreesToCardinal(float degrees) {
     return degreesToCardinalStatic(degrees);
   }
 
+ /*
+    * Start listening to device motion updates and call the provided callback with the heading data.
+    * Uses CoreMotion's device motion updates with magnetic north reference frame.
+    * Applies a noise filter to only send updates when heading changes by at least 1 degree.
+    */
   void HybridCardinalDirection::startUpdates(const std::function<void(const SensorData&)>& callback) {
     _callback = callback;
     _isListening = true;
@@ -43,9 +79,14 @@ namespace margelo::nitro::nitrocardinaldirection {
       if (!listeningPtr->load() || !*callbackPtr || error) return;
 
       // yaw is rotation around the vertical axis (Z), relative to magnetic north.
-      // Negate and convert to 0–360° compass bearing.
+      // Negate and convert to 0–360 compass bearing.
       double heading = -motion.attitude.yaw * (180.0 / M_PI);
       if (heading < 0.0) heading += 360.0;
+      
+      // Apply orientation correction to account for device rotation (portrait vs landscape)
+      float correction = getOrientationCorrection();
+      heading += correction;
+      if (heading >= 360.0) heading -= 360.0;
 
       // Skip update if change is less than 1 degree (noise filter)
       float headingF = static_cast<float>(heading);

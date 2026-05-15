@@ -1,11 +1,13 @@
-# react-native-nitro-cardinal-direction
-
+# React Native Facing Direction
 This is a React Native nitro module that allows realtime updates for the magnetic cardinal direction the user is currently facing in.
 
+# Permissiosn
+No permissions are required.
+
+# Install dependencies
+`npm install react-native-nitro-modules`
+
 ## Installation
-
-TODO: Add to npm
-
 `npm install react-native-nitro-cardinal-direction`
 
 ## Usage
@@ -15,15 +17,13 @@ TODO: Add to npm
 `import { cardinalDirection } from 'react-native-nitro-cardinal-direction';`
 
 ### Starting the listener
-
 ```
-      cardinalDirection.startUpdates((data) => {
-        console.log(data);
-      });
+cardinalDirection.startUpdates((data) => {
+  console.log(data);
+});
 ```
 
-The data returned by the listner is a object containing timestamp of the last update, heading in degrees and the direction you are facing.
-
+#### Output
 ```
 {
   timestamp: number,
@@ -35,5 +35,5 @@ The data returned by the listner is a object containing timestamp of the last up
 ### Stopping the listener
 
 ```
-      cardinalDirection.stopUpdates();
+cardinalDirection.stopUpdates();
 ```
