@@ -18,32 +18,42 @@ JavaVM* g_JavaVM = nullptr;
 namespace margelo::nitro::nitrocardinaldirection {
 
   /*
-   * Get orientation correction angle based on current device rotation.
-   * Returns the angle to add to the heading to account for how the phone is rotated.
-   * 
-   * Surface.ROTATION_0 (Portrait) = 0
-   * Surface.ROTATION_90 (Landscape Left) = 90
-   * Surface.ROTATION_180 (Portrait Upside Down) = 180
-   * Surface.ROTATION_270 (Landscape Right) = 270
+   * MW - Remap current sensor coordinates back to portrait orientation.
+   * This makes heading calculations consistent regardless of device rotation.
    */
-  static float getOrientationCorrection(int displayRotation) {
+  static void remapToPortrait(int displayRotation, const float* in, float* out) {
     switch (displayRotation) {
-      case 0:   // Surface.ROTATION_0 (Portrait)
-        return 0.0f;
-      case 1:   // Surface.ROTATION_90 (Landscape Left)
-        return 90.0f;
-      case 2:   // Surface.ROTATION_180 (Portrait Upside Down)
-        return 180.0f;
-      case 3:   // Surface.ROTATION_270 (Landscape Right)
-        return 270.0f;
-      default:
-        return 0.0f;
+      case 1: // Surface.ROTATION_90
+        out[0] = in[1];
+        out[1] = -in[0];
+        out[2] = in[2];
+        break;
+      case 2: // Surface.ROTATION_180
+        out[0] = -in[0];
+        out[1] = -in[1];
+        out[2] = in[2];
+        break;
+      case 3: // Surface.ROTATION_270
+        out[0] = -in[1];
+        out[1] = in[0];
+        out[2] = in[2];
+        break;
+      default: // Surface.ROTATION_0 or unknown
+        out[0] = in[0];
+        out[1] = in[1];
+        out[2] = in[2];
+        break;
     }
   }
 
-  float HybridCardinalDirection::calculateAzimuth(const float* accel, const float* mag) {
+  float HybridCardinalDirection::calculateAzimuth(const float* accel, const float* mag, int displayRotation) {
+    float rotatedAccel[3];
+    float rotatedMag[3];
+    remapToPortrait(displayRotation, accel, rotatedAccel);
+    remapToPortrait(displayRotation, mag, rotatedMag);
+
     // Normalize accelerometer vector (gravity)
-    float ax = accel[0], ay = accel[1], az = accel[2];
+    float ax = rotatedAccel[0], ay = rotatedAccel[1], az = rotatedAccel[2];
     float accelMag = std::sqrt(ax * ax + ay * ay + az * az);
     if (accelMag < 0.001f) return 0.0f; // Avoid division by zero
     ax /= accelMag;
@@ -51,7 +61,7 @@ namespace margelo::nitro::nitrocardinaldirection {
     az /= accelMag;
 
     // Normalize magnetometer vector
-    float mx = mag[0], my = mag[1], mz = mag[2];
+    float mx = rotatedMag[0], my = rotatedMag[1], mz = rotatedMag[2];
     float magMag = std::sqrt(mx * mx + my * my + mz * mz);
     if (magMag < 0.001f) return 0.0f; // Avoid division by zero
     mx /= magMag;
@@ -176,11 +186,7 @@ namespace margelo::nitro::nitrocardinaldirection {
                  }
                  _displayRotation = rotation;
 
-                 float azimuth = calculateAzimuth(lastAcceleration, lastMag);
-                 // Apply orientation correction to account for device rotation (portrait vs landscape)
-                 float correction = getOrientationCorrection(_displayRotation);
-                 azimuth += correction;
-                 if (azimuth >= 360.0f) azimuth -= 360.0f;
+                 float azimuth = calculateAzimuth(lastAcceleration, lastMag, _displayRotation);
                  std::string cardinal = degreesToCardinal(azimuth);
                  SensorData data(
                    static_cast<double>(event.timestamp / 1e9),

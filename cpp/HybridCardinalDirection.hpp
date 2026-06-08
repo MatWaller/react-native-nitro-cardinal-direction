@@ -26,7 +26,7 @@ namespace margelo::nitro::nitrocardinaldirection {
     std::string degreesToCardinal(float degrees);
 
 #ifdef __ANDROID__
-    float calculateAzimuth(const float* accel, const float* mag);
+    float calculateAzimuth(const float* accel, const float* mag, int displayRotation);
     bool hasSignificantChange(const float* current, const float* previous, float threshold);
     ASensorEventQueue* _sensorEventQueue{nullptr};
     ASensorManager* _sensorManager{nullptr};
