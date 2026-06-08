@@ -68,8 +68,7 @@ namespace margelo::nitro::nitrocardinaldirection {
     my /= magMag;
     mz /= magMag;
 
-    // Calculate East vector = cross product of (0,0,-1) and accel
-    // East = Magnetic North x Accel
+    // MW - Calculate East vector = cross product of magnetic field and gravity
     float ex = my * az - mz * ay;
     float ey = mz * ax - mx * az;
     float ez = mx * ay - my * ax;
@@ -79,12 +78,14 @@ namespace margelo::nitro::nitrocardinaldirection {
     ey /= eMag;
     ez /= eMag;
 
-    // Calculate North vector = accel x East
+    // Calculate North vector = gravity x East
     float nx = ay * ez - az * ey;
+    float ny = az * ex - ax * ez;
+    float nz = ax * ey - ay * ex;
 
-    // Calculate azimuth using atan2
-    // atan2(East component, North component) gives bearing from North
-    float azimuth = std::atan2(ex, nx) * 180.0f / 3.14159265f;
+    // MW - Calculate azimuth using the device top-edge (Y axis) projection.
+    // atan2(-East_Y, North_Y) returns heading from North, clockwise.
+    float azimuth = std::atan2(-ey, ny) * 180.0f / 3.14159265f;
     if (azimuth < 0.0f) azimuth += 360.0f;
     return azimuth;
   }
@@ -113,6 +114,7 @@ namespace margelo::nitro::nitrocardinaldirection {
     _magnet = ASensorManager_getDefaultSensor(_sensorManager, ASENSOR_TYPE_MAGNETIC_FIELD);
     
     _displayRotation = 0;
+    _prevHeading = -1.0f;
 
     std::thread([this]() {
       ALooper* looper = ALooper_prepare(ALOOPER_PREPARE_ALLOW_NON_CALLBACKS);
@@ -187,6 +189,14 @@ namespace margelo::nitro::nitrocardinaldirection {
                  _displayRotation = rotation;
 
                  float azimuth = calculateAzimuth(lastAcceleration, lastMag, _displayRotation);
+                 if (_prevHeading >= 0.0f) {
+                   float diff = std::fabs(azimuth - _prevHeading);
+                   if (diff > 180.0f) diff = 360.0f - diff;
+                   if (diff < HEADING_THRESHOLD) {
+                     continue;
+                   }
+                 }
+                 _prevHeading = azimuth;
                  std::string cardinal = degreesToCardinal(azimuth);
                  SensorData data(
                    static_cast<double>(event.timestamp / 1e9),

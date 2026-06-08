@@ -37,8 +37,10 @@ namespace margelo::nitro::nitrocardinaldirection {
     float prevAcceleration[3]{0, 0, 0};
     float prevMag[3]{0, 0, 0};
     int _displayRotation{0};
+    float _prevHeading{-1.0f};
     static constexpr float ACCEL_THRESHOLD = 0.5f;
     static constexpr float MAG_THRESHOLD = 5.0f;
+    static constexpr float HEADING_THRESHOLD = 1.0f;
 #endif
 
 #ifdef __APPLE__
