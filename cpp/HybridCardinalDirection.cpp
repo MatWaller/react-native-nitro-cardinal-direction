@@ -23,9 +23,9 @@ namespace margelo::nitro::nitrocardinaldirection {
    */
   static void remapToPortrait(int displayRotation, const float* in, float* out) {
     switch (displayRotation) {
-      case 1: // Surface.ROTATION_90
-        out[0] = in[1];
-        out[1] = -in[0];
+      case 1: // Surface.ROTATION_90 (top of phone points LEFT, landscape top = sensor +X)
+        out[0] = -in[1];
+        out[1] = in[0];
         out[2] = in[2];
         break;
       case 2: // Surface.ROTATION_180
@@ -33,9 +33,9 @@ namespace margelo::nitro::nitrocardinaldirection {
         out[1] = -in[1];
         out[2] = in[2];
         break;
-      case 3: // Surface.ROTATION_270
-        out[0] = -in[1];
-        out[1] = in[0];
+      case 3: // Surface.ROTATION_270 (top of phone points RIGHT, landscape top = sensor -X)
+        out[0] = in[1];
+        out[1] = -in[0];
         out[2] = in[2];
         break;
       default: // Surface.ROTATION_0 or unknown
