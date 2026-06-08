@@ -46,6 +46,23 @@ namespace margelo::nitro::nitrocardinaldirection {
     }
   }
 
+  static int getPhysicalRotationFromAccel(const float* accel) {
+    float ax = accel[0], ay = accel[1], az = accel[2];
+    float absX = std::fabs(ax), absY = std::fabs(ay), absZ = std::fabs(az);
+    if (absZ >= absX && absZ >= absY) {
+      // Phone is mostly flat — treat as portrait, no remap needed
+      return 0;
+    }
+    if (absX > absY) {
+      // Landscape: gravity pulls toward -X → top went LEFT (ROTATION_90)
+      //            gravity pulls toward +X → top went RIGHT (ROTATION_270)
+      return ax < 0.0f ? 1 : 3;
+    }
+    // Portrait: gravity pulls toward -Y → natural (ROTATION_0)
+    //           gravity pulls toward +Y → upside-down (ROTATION_180)
+    return ay < 0.0f ? 0 : 2;
+  }
+
   float HybridCardinalDirection::calculateAzimuth(const float* accel, const float* mag, int displayRotation) {
     float rotatedAccel[3];
     float rotatedMag[3];
@@ -134,9 +151,6 @@ namespace margelo::nitro::nitrocardinaldirection {
 
       ASensorEvent event;
 
-
-      JNIEnv* env = nullptr;
-
       while (_isListening) {
         if (ALooper_pollOnce(100, nullptr, nullptr, nullptr) == SENSOR_LOOPER_ID) {
           while (ASensorEventQueue_getEvents(_sensorEventQueue, &event, 1) > 0) {
@@ -167,32 +181,9 @@ namespace margelo::nitro::nitrocardinaldirection {
                }
 
                if (shouldUpdate) {
-                 // Fetch display rotation from OrientationHelper via JNI
-
-                 int rotation = 0;
-                 if (g_JavaVM) {
-                   jint getEnvStat = g_JavaVM->GetEnv((void**)&env, JNI_VERSION_1_6);
-                   bool didAttach = false;
-                   if (getEnvStat == JNI_EDETACHED) {
-                     if (g_JavaVM->AttachCurrentThread(&env, nullptr) == 0) {
-                       didAttach = true;
-                     }
-                   }
-                   if (env) {
-                     jclass helperClass = env->FindClass("com/margelo/nitro/nitrocardinaldirection/OrientationHelper");
-                     if (helperClass) {
-                       jmethodID getRotation = env->GetStaticMethodID(helperClass, "getDisplayRotation", "()I");
-                       if (getRotation) {
-                         rotation = env->CallStaticIntMethod(helperClass, getRotation);
-                       }
-                       env->DeleteLocalRef(helperClass);
-                     }
-                   }
-                   if (didAttach) {
-                     g_JavaVM->DetachCurrentThread();
-                   }
-                 }
-                 _displayRotation = rotation;
+                 // Derive physical rotation from accelerometer — works even when
+                 // the app is locked to portrait (display rotation would return 0).
+                 _displayRotation = getPhysicalRotationFromAccel(lastAcceleration);
 
                  float azimuth = calculateAzimuth(lastAcceleration, lastMag, _displayRotation);
                  if (_prevHeading >= 0.0f) {
