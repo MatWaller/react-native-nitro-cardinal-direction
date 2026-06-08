@@ -79,13 +79,11 @@ namespace margelo::nitro::nitrocardinaldirection {
     ez /= eMag;
 
     // Calculate North vector = gravity x East
-    float nx = ay * ez - az * ey;
     float ny = az * ex - ax * ez;
-    float nz = ax * ey - ay * ex;
 
     // MW - Calculate azimuth using the device top-edge (Y axis) projection.
-    // atan2(-East_Y, North_Y) returns heading from North, clockwise.
-    float azimuth = std::atan2(-ey, ny) * 180.0f / 3.14159265f;
+    // atan2(East_Y, North_Y) returns heading from North, clockwise.
+    float azimuth = std::atan2(ey, ny) * 180.0f / 3.14159265f;
     if (azimuth < 0.0f) azimuth += 360.0f;
     return azimuth;
   }
@@ -119,7 +117,15 @@ namespace margelo::nitro::nitrocardinaldirection {
     std::thread([this]() {
       ALooper* looper = ALooper_prepare(ALOOPER_PREPARE_ALLOW_NON_CALLBACKS);
       _sensorEventQueue = ASensorManager_createEventQueue(_sensorManager, looper, SENSOR_LOOPER_ID, nullptr, nullptr);
-      
+      if (!_sensorEventQueue || !_accelerometer || !_magnet) {
+        if (_sensorEventQueue) {
+          ASensorManager_destroyEventQueue(_sensorManager, _sensorEventQueue);
+          _sensorEventQueue = nullptr;
+        }
+        _isListening = false;
+        return;
+      }
+
       ASensorEventQueue_enableSensor(_sensorEventQueue, _magnet);
       ASensorEventQueue_setEventRate(_sensorEventQueue, _magnet, 100000); // 100ms
 
