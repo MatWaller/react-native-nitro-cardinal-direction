@@ -8,216 +8,174 @@
 #include <cmath>
 #include <jni.h>
 
-// Store JavaVM pointer globally
-JavaVM* g_JavaVM = nullptr;
-
 #include "HybridCardinalDirection.hpp"
 
 #define SENSOR_LOOPER_ID 1
 
-namespace margelo::nitro::nitrocardinaldirection {
+namespace margelo::nitro::nitrocardinaldirection
+{
 
-  /*
-   * MW - Remap current sensor coordinates back to portrait orientation.
-   * This makes heading calculations consistent regardless of device rotation.
-   */
-  static void remapToPortrait(int displayRotation, const float* in, float* out) {
-    switch (displayRotation) {
-      case 1: // Surface.ROTATION_90 (top of phone points LEFT, landscape top = sensor +X)
-        out[0] = -in[1];
-        out[1] = in[0];
-        out[2] = in[2];
-        break;
-      case 2: // Surface.ROTATION_180
-        out[0] = -in[0];
-        out[1] = -in[1];
-        out[2] = in[2];
-        break;
-      case 3: // Surface.ROTATION_270 (top of phone points RIGHT, landscape top = sensor -X)
-        out[0] = in[1];
-        out[1] = -in[0];
-        out[2] = in[2];
-        break;
-      default: // Surface.ROTATION_0 or unknown
-        out[0] = in[0];
-        out[1] = in[1];
-        out[2] = in[2];
-        break;
+  namespace {
+    constexpr float kHeadingThreshold = 1.0f;
+
+    struct Vec3 {
+      float x;
+      float y;
+      float z;
+    };
+
+    static bool normalize(Vec3& v) {
+      float len = std::sqrt(v.x * v.x + v.y * v.y + v.z * v.z);
+      if (len < 1e-6f) return false;
+      v.x /= len;
+      v.y /= len;
+      v.z /= len;
+      return true;
     }
-  }
 
-  static int getPhysicalRotationFromAccel(const float* accel) {
-    float ax = accel[0], ay = accel[1], az = accel[2];
-    float absX = std::fabs(ax), absY = std::fabs(ay), absZ = std::fabs(az);
-    if (absZ >= absX && absZ >= absY) {
-      // Phone is mostly flat — treat as portrait, no remap needed
-      return 0;
+    static Vec3 cross(const Vec3& a, const Vec3& b) {
+      return Vec3{
+        a.y * b.z - a.z * b.y,
+        a.z * b.x - a.x * b.z,
+        a.x * b.y - a.y * b.x,
+      };
     }
-    if (absX > absY) {
-      // Landscape: gravity pulls toward -X → top went LEFT (ROTATION_90)
-      //            gravity pulls toward +X → top went RIGHT (ROTATION_270)
-      return ax < 0.0f ? 1 : 3;
+
+    static float circularDiff(float a, float b) {
+      float diff = std::fabs(a - b);
+      return std::fmin(diff, 360.0f - diff);
     }
-    // Portrait: gravity pulls toward -Y → natural (ROTATION_0)
-    //           gravity pulls toward +Y → upside-down (ROTATION_180)
-    return ay < 0.0f ? 0 : 2;
-  }
 
-  float HybridCardinalDirection::calculateAzimuth(const float* accel, const float* mag, int displayRotation) {
-    float rotatedAccel[3];
-    float rotatedMag[3];
-    remapToPortrait(displayRotation, accel, rotatedAccel);
-    remapToPortrait(displayRotation, mag, rotatedMag);
+    static bool computeBackHeadingDegrees(const Vec3& accelerometer,
+                        const Vec3& magnetometer,
+                                          float& outDegrees) {
+      // Build earth axes in device coordinates.
+      Vec3 gravity{accelerometer.x, accelerometer.y, accelerometer.z};
+      Vec3 magnetic{magnetometer.x, magnetometer.y, magnetometer.z};
 
-    // Normalize accelerometer vector (gravity)
-    float ax = rotatedAccel[0], ay = rotatedAccel[1], az = rotatedAccel[2];
-    float accelMag = std::sqrt(ax * ax + ay * ay + az * az);
-    if (accelMag < 0.001f) return 0.0f; // Avoid division by zero
-    ax /= accelMag;
-    ay /= accelMag;
-    az /= accelMag;
+      if (!normalize(gravity) || !normalize(magnetic)) return false;
 
-    // Normalize magnetometer vector
-    float mx = rotatedMag[0], my = rotatedMag[1], mz = rotatedMag[2];
-    float magMag = std::sqrt(mx * mx + my * my + mz * mz);
-    if (magMag < 0.001f) return 0.0f; // Avoid division by zero
-    mx /= magMag;
-    my /= magMag;
-    mz /= magMag;
+      Vec3 east = cross(magnetic, gravity);
+      if (!normalize(east)) return false;
 
-    // MW - Calculate East vector = cross product of magnetic field and gravity
-    float ex = my * az - mz * ay;
-    float ey = mz * ax - mx * az;
-    float ez = mx * ay - my * ax;
-    float eMag = std::sqrt(ex * ex + ey * ey + ez * ez);
-    if (eMag < 0.001f) return 0.0f;
-    ex /= eMag;
-    ey /= eMag;
-    ez /= eMag;
+      Vec3 north = cross(gravity, east);
+      if (!normalize(north)) return false;
 
-    // Calculate North vector = gravity x East
-    float ny = az * ex - ax * ez;
+      // Back-of-phone direction in device frame is negative Z.
+      constexpr Vec3 back{0.0f, 0.0f, -1.0f};
+      float northComponent = back.x * north.x + back.y * north.y + back.z * north.z;
+      float eastComponent = back.x * east.x + back.y * east.y + back.z * east.z;
 
-    // MW - Calculate azimuth using the device top-edge (Y axis) projection.
-    // atan2(East_Y, North_Y) returns heading from North, clockwise.
-    float azimuth = std::atan2(ey, ny) * 180.0f / 3.14159265f;
-    if (azimuth < 0.0f) azimuth += 360.0f;
-    return azimuth;
-  }
+      if (std::hypot(northComponent, eastComponent) < 1e-6f) return false;
 
-  std::string HybridCardinalDirection::degreesToCardinal(float degrees) {
-    static const char* directions[] = {"N", "NE", "E", "SE", "S", "SW", "W", "NW"};
-    int index = static_cast<int>((degrees + 22.5) / 45.0) % 8;
-    return directions[index];
-  }
+      float heading = std::atan2(eastComponent, northComponent) * (180.0f / static_cast<float>(M_PI));
+      if (heading < 0.0f) heading += 360.0f;
+      outDegrees = heading;
+      return true;
+    }
 
-  bool HybridCardinalDirection::hasSignificantChange(const float* current, const float* previous, float threshold) {
-    float dx = current[0] - previous[0];
-    float dy = current[1] - previous[1];
-    float dz = current[2] - previous[2];
-    float magnitude = std::sqrt(dx * dx + dy * dy + dz * dz);
-    return magnitude >= threshold;
-  }
+    static std::string degreesToCardinal(float degrees) {
+      static const char* directions[] = {"N", "NE", "E", "SE", "S", "SW", "W", "NW"};
+      int index = static_cast<int>((degrees + 22.5f) / 45.0f) % 8;
+      return directions[index];
+    }
+  } // namespace
 
-  void HybridCardinalDirection::startUpdates(const std::function<void(const SensorData&)>& callback) {
-    _callback = callback;
-    _isListening = true;
+  void HybridCardinalDirection::startUpdates(const std::function<void(const SensorData &)> &callback)
+  {
+    ASensorManager *sensorManager = ASensorManager_getInstance();
+    const ASensor *accelerometer = ASensorManager_getDefaultSensor(sensorManager, ASENSOR_TYPE_ACCELEROMETER);
+    const ASensor *magnet = ASensorManager_getDefaultSensor(sensorManager, ASENSOR_TYPE_MAGNETIC_FIELD);
 
-    _sensorManager = ASensorManager_getInstance();
-    
-    _accelerometer = ASensorManager_getDefaultSensor(_sensorManager, ASENSOR_TYPE_ACCELEROMETER);
-    _magnet = ASensorManager_getDefaultSensor(_sensorManager, ASENSOR_TYPE_MAGNETIC_FIELD);
-    
-    _displayRotation = 0;
-    _prevHeading = -1.0f;
+    // Ensure required sensors are present before we start the listener thread.
+    if (!sensorManager || !accelerometer || !magnet) {
+      _isListening = std::make_shared<std::atomic<bool>>(false);
+      return;
+    }
 
-    std::thread([this]() {
+    _isListening = std::make_shared<std::atomic<bool>>(true);
+
+    auto isListening = _isListening; // shared_ptr keeps the flag alive in the thread
+    auto cb = callback;
+
+    std::thread([isListening, cb, sensorManager, accelerometer, magnet]() mutable {
       ALooper* looper = ALooper_prepare(ALOOPER_PREPARE_ALLOW_NON_CALLBACKS);
-      _sensorEventQueue = ASensorManager_createEventQueue(_sensorManager, looper, SENSOR_LOOPER_ID, nullptr, nullptr);
-      if (!_sensorEventQueue || !_accelerometer || !_magnet) {
-        if (_sensorEventQueue) {
-          ASensorManager_destroyEventQueue(_sensorManager, _sensorEventQueue);
-          _sensorEventQueue = nullptr;
-        }
-        _isListening = false;
+      ASensorEventQueue* queue = ASensorManager_createEventQueue(sensorManager, looper, SENSOR_LOOPER_ID, nullptr, nullptr);
+
+      if (!queue) {
+        if (queue) ASensorManager_destroyEventQueue(sensorManager, queue);
+        *isListening = false;
         return;
-      }
+      } 
+    
+      // MW - Enable sensors...
+      ASensorEventQueue_enableSensor(queue, accelerometer);
+      ASensorEventQueue_enableSensor(queue, magnet);
 
-      ASensorEventQueue_enableSensor(_sensorEventQueue, _magnet);
-      ASensorEventQueue_setEventRate(_sensorEventQueue, _magnet, 100000); // 100ms
-
-      ASensorEventQueue_enableSensor(_sensorEventQueue, _accelerometer);
-      ASensorEventQueue_setEventRate(_sensorEventQueue, _accelerometer, 100000); // 100ms
+      // MW - Set sensor update rates (in microseconds)
+      ASensorEventQueue_setEventRate(queue, accelerometer, 1000000); // 1s
+      ASensorEventQueue_setEventRate(queue, magnet, 1000000); // 1s
 
       ASensorEvent event;
+      Vec3 latestAccelerometer{0.0f, 0.0f, 0.0f};
+      Vec3 latestMagnetometer{0.0f, 0.0f, 0.0f};
+      bool hasAccelerometer = false;
+      bool hasMagnetometer = false;
+      float prevHeading = -1.0f;
 
-      while (_isListening) {
-        if (ALooper_pollOnce(100, nullptr, nullptr, nullptr) == SENSOR_LOOPER_ID) {
-          while (ASensorEventQueue_getEvents(_sensorEventQueue, &event, 1) > 0) {
-            if (_callback) {
-               bool shouldUpdate = false;
-               if (event.type == ASENSOR_TYPE_ACCELEROMETER) {
-                 float currentAccel[3] = {event.acceleration.x, event.acceleration.y, event.acceleration.z};
-                 if (hasSignificantChange(currentAccel, prevAcceleration, ACCEL_THRESHOLD)) {
-                   lastAcceleration[0] = event.acceleration.x;
-                   lastAcceleration[1] = event.acceleration.y;
-                   lastAcceleration[2] = event.acceleration.z;
-                   prevAcceleration[0] = event.acceleration.x;
-                   prevAcceleration[1] = event.acceleration.y;
-                   prevAcceleration[2] = event.acceleration.z;
-                   shouldUpdate = true;
-                 }
-               } else if (event.type == ASENSOR_TYPE_MAGNETIC_FIELD) {
-                 float currentMag[3] = {event.magnetic.x, event.magnetic.y, event.magnetic.z};
-                 if (hasSignificantChange(currentMag, prevMag, MAG_THRESHOLD)) {
-                   lastMag[0] = event.magnetic.x;
-                   lastMag[1] = event.magnetic.y;
-                   lastMag[2] = event.magnetic.z;
-                   prevMag[0] = event.magnetic.x;
-                   prevMag[1] = event.magnetic.y;
-                   prevMag[2] = event.magnetic.z;
-                   shouldUpdate = true;
-                 }
-               }
+      while(isListening->load()) {
+        if(ALooper_pollOnce(1000, nullptr, nullptr, nullptr) == SENSOR_LOOPER_ID) {
+          while (ASensorEventQueue_getEvents(queue, &event, 1) > 0) {
+            if (event.type == ASENSOR_TYPE_ACCELEROMETER) {
+              latestAccelerometer = Vec3{
+                static_cast<float>(event.acceleration.x),
+                static_cast<float>(event.acceleration.y),
+                static_cast<float>(event.acceleration.z)
+              };
+              hasAccelerometer = true;
+            } else if (event.type == ASENSOR_TYPE_MAGNETIC_FIELD) {
+              latestMagnetometer = Vec3{
+                static_cast<float>(event.magnetic.x),
+                static_cast<float>(event.magnetic.y),
+                static_cast<float>(event.magnetic.z)
+              };
+              hasMagnetometer = true;
+            } else {
+              continue;
+            }
 
-               if (shouldUpdate) {
-                 // Derive physical rotation from accelerometer — works even when
-                 // the app is locked to portrait (display rotation would return 0).
-                 _displayRotation = getPhysicalRotationFromAccel(lastAcceleration);
+            // Emit updates only after receiving at least one sample from both sensors.
+            if (hasAccelerometer && hasMagnetometer) {
+              float heading = 0.0f;
+              if (!computeBackHeadingDegrees(latestAccelerometer, latestMagnetometer, heading)) {
+                continue;
+              }
 
-                 float azimuth = calculateAzimuth(lastAcceleration, lastMag, _displayRotation);
-                 if (_prevHeading >= 0.0f) {
-                   float diff = std::fabs(azimuth - _prevHeading);
-                   if (diff > 180.0f) diff = 360.0f - diff;
-                   if (diff < HEADING_THRESHOLD) {
-                     continue;
-                   }
-                 }
-                 _prevHeading = azimuth;
-                 std::string cardinal = degreesToCardinal(azimuth);
-                 SensorData data(
-                   static_cast<double>(event.timestamp / 1e9),
-                   static_cast<double>(azimuth),
-                   cardinal
-                 );
-                 _callback(data);
-               }
+              if (prevHeading >= 0.0f && circularDiff(heading, prevHeading) < kHeadingThreshold) {
+                continue;
+              }
+              prevHeading = heading;
+
+              SensorData data;
+              data.degrees = heading;
+              data.cardinal = degreesToCardinal(heading);
+              cb(data);
             }
           }
         }
       }
-
-      ASensorEventQueue_disableSensor(_sensorEventQueue, _accelerometer);
-      ASensorEventQueue_disableSensor(_sensorEventQueue, _magnet);
-
-      ASensorManager_destroyEventQueue(_sensorManager, _sensorEventQueue);
-      _sensorEventQueue = nullptr;
+      ASensorEventQueue_disableSensor(queue, accelerometer);
+      ASensorEventQueue_disableSensor(queue, magnet);
+      ASensorManager_destroyEventQueue(sensorManager, queue);
     }).detach();
   }
 
-  void HybridCardinalDirection::stopUpdates() {
-    _isListening = false;
-    _callback = nullptr;
+  void HybridCardinalDirection::stopUpdates()
+  {
+    if (_isListening)
+    {
+      *_isListening = false;
+    }
   }
 } // namespace margelo::nitro::nitrocardinaldirection
 

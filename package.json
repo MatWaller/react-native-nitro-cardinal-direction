@@ -1,6 +1,6 @@
 {
   "name": "react-native-nitro-cardinal-direction",
-  "version": "0.1.5",
+  "version": "0.3.5",
   "description": "react-native-nitro-cardinal-direction",
   "main": "lib/index",
   "module": "lib/index",

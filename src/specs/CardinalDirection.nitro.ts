@@ -1,9 +1,8 @@
 import { type HybridObject } from 'react-native-nitro-modules'
 
 export interface SensorData {
-  timestamp: number
-  heading: number
-  direction: string
+  cardinal: string
+  degrees: number
 }
 
 export interface CardinalDirection extends HybridObject<{

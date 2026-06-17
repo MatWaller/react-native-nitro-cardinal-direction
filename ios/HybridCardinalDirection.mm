@@ -1,107 +1,101 @@
 #include "HybridCardinalDirection.hpp"
 #import <CoreMotion/CoreMotion.h>
-#import <UIKit/UIKit.h>
 #include <cmath>
 
 namespace margelo::nitro::nitrocardinaldirection {
 
-  /*
-   * Get orientation correction angle based on current device orientation.
-   * Returns the angle to add to the heading to account for how the phone is rotated.
-   */
-  static float getOrientationCorrection() {
-    UIDeviceOrientation orientation = [UIDevice currentDevice].orientation;
-    switch (orientation) {
-      case UIDeviceOrientationPortrait:
-        return 0.0f;
-      case UIDeviceOrientationLandscapeLeft:
-        return 90.0f;
-      case UIDeviceOrientationLandscapeRight:
-        return 270.0f; // or -90.0f
-      case UIDeviceOrientationPortraitUpsideDown:
-        return 180.0f;
-      default:
-        // Unknown orientation, assume portrait
-        return 0.0f;
+  namespace {
+    constexpr float kHeadingThreshold = 1.0f;
+
+    static float circularDiff(float a, float b) {
+      float diff = std::fabs(a - b);
+      return std::fmin(diff, 360.0f - diff);
     }
-  }
 
- /*
-     * MW - Convert degrees to cardinal direction (N, NE, E, SE, S, SW, W, NW)
-     * 0 = N, 45 = NE, 90 = E, etc.
-     * Each direction covers a 45 range centered on its angle (e.g. N is 337.5–22.5)
-     * Adding 22.5 before dividing by 45 ensures correct rounding to nearest direction.
-     * Modulo 8 wraps around from NW back to N.
- */
-  static std::string degreesToCardinalStatic(float degrees) {
-    static const char* directions[] = {"N", "NE", "E", "SE", "S", "SW", "W", "NW"};
-    int index = static_cast<int>((degrees + 22.5f) / 45.0f) % 8;
-    return directions[index];
-  }
+    static std::string degreesToCardinal(float degrees) {
+      static const char* directions[] = {"N", "NE", "E", "SE", "S", "SW", "W", "NW"};
+      int index = static_cast<int>((degrees + 22.5f) / 45.0f) % 8;
+      return directions[index];
+    }
 
-  /* 
-    * Instance method that calls the static method. This allows the public API to be non-static while still using the same logic.
-  */
-  std::string HybridCardinalDirection::degreesToCardinal(float degrees) {
-    return degreesToCardinalStatic(degrees);
-  }
+    static bool computeBackHeadingDegrees(const CMRotationMatrix& rotationMatrix, float& outHeading) {
+      // rotationMatrix transforms from reference frame to device frame.
+      // The back-of-phone direction in device coordinates is negative Z.
+      double north = -rotationMatrix.m31;
+      double west = -rotationMatrix.m32;
+      double east = -west;
+
+      if (std::hypot(north, east) < 1e-6) {
+        return false;
+      }
+
+      double heading = std::atan2(east, north) * (180.0 / M_PI);
+      if (heading < 0.0) heading += 360.0;
+      outHeading = static_cast<float>(heading);
+      return true;
+    }
+  } // namespace
 
  /*
     * Start listening to device motion updates and call the provided callback with the heading data.
-    * Uses CoreMotion's device motion updates with magnetic north reference frame.
+    * Uses CoreMotion's device motion updates with magnetic north reference frame and computes
+    * heading from the back-of-phone vector so orientation changes remain normalized.
     * Applies a noise filter to only send updates when heading changes by at least 1 degree.
     */
   void HybridCardinalDirection::startUpdates(const std::function<void(const SensorData&)>& callback) {
+    _isListening = std::make_shared<std::atomic<bool>>(true);
     _callback = callback;
-    _isListening = true;
-    _prevHeading = -1.0f; // Force first update through
+    _prevHeading = -1.0f;
 
     CMMotionManager* manager = [[CMMotionManager alloc] init];
-    // ARC bridge: retain the ObjC object in a C++ void* member
-    _iosMotionManager = (__bridge_retained void*)manager;
+    auto isListening = _isListening;
 
-    if (!manager.deviceMotionAvailable) {
+    // Ensure required motion/magnetic capabilities are available before starting updates.
+    if (!manager.deviceMotionAvailable ||
+        (CMMotionManager.availableAttitudeReferenceFrames & CMAttitudeReferenceFrameXMagneticNorthZVertical) == 0) {
+      *isListening = false;
+      _callback = nullptr;
       return;
     }
+
+    // ARC bridge: retain the ObjC object in a C++ void* member
+    _iosMotionManager = (__bridge_retained void*)manager;
 
     manager.deviceMotionUpdateInterval = 0.1; // 100ms, matches Android rate
 
     NSOperationQueue* queue = [[NSOperationQueue alloc] init];
 
-    // Capture by pointer so the block can observe live state changes from stopUpdates()
+    // Capture by pointer/shared state so the block can observe stopUpdates() calls.
     auto* callbackPtr = &_callback;
-    auto* listeningPtr = &_isListening;
     auto* prevHeadingPtr = &_prevHeading;
 
     [manager startDeviceMotionUpdatesUsingReferenceFrame:CMAttitudeReferenceFrameXMagneticNorthZVertical
                                                 toQueue:queue
                                             withHandler:^(CMDeviceMotion* motion, NSError* error) {
-      if (!listeningPtr->load() || !*callbackPtr || error) return;
+      if (!isListening->load() || !*callbackPtr || error || motion == nil) return;
 
-      // yaw is rotation around the vertical axis (Z), relative to magnetic north.
-      // Negate and convert to 0–360 compass bearing.
-      double heading = -motion.attitude.yaw * (180.0 / M_PI);
-      if (heading < 0.0) heading += 360.0;
-      
-      // Apply orientation correction to account for device rotation (portrait vs landscape)
-      float correction = getOrientationCorrection();
-      heading += correction;
-      if (heading >= 360.0) heading -= 360.0;
+      float heading = 0.0f;
+      if (!computeBackHeadingDegrees(motion.attitude.rotationMatrix, heading)) {
+        return;
+      }
 
       // Skip update if change is less than 1 degree (noise filter)
-      float headingF = static_cast<float>(heading);
-      float diff = std::abs(headingF - *prevHeadingPtr);
-      if (diff < 360.0f && diff < 1.0f) return; // diff == 360 on first run (prevHeading == -1)
-      *prevHeadingPtr = headingF;
+      if (*prevHeadingPtr >= 0.0f && circularDiff(heading, *prevHeadingPtr) < kHeadingThreshold) {
+        return;
+      }
+      *prevHeadingPtr = heading;
 
-      std::string cardinal = degreesToCardinalStatic(headingF);
-      SensorData data(motion.timestamp, heading, cardinal);
+      SensorData data;
+      data.degrees = heading;
+      data.cardinal = degreesToCardinal(heading);
       (*callbackPtr)(data);
     }];
   }
 
   void HybridCardinalDirection::stopUpdates() {
-    _isListening = false;
+    if (_isListening) {
+      *_isListening = false;
+    }
     _callback = nullptr;
 
     if (_iosMotionManager) {

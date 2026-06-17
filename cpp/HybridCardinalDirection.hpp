@@ -3,6 +3,7 @@
 #include <atomic>
 #include <cmath>
 #include <string>
+#include <memory>
 
 #ifdef __ANDROID__
   #include <android/sensor.h>
@@ -22,25 +23,13 @@ namespace margelo::nitro::nitrocardinaldirection {
 
   private:
     std::function<void(const SensorData&)> _callback;
-    std::atomic<bool> _isListening{false};
-    std::string degreesToCardinal(float degrees);
+    std::shared_ptr<std::atomic<bool>> _isListening;
 
 #ifdef __ANDROID__
-    float calculateAzimuth(const float* accel, const float* mag, int displayRotation);
-    bool hasSignificantChange(const float* current, const float* previous, float threshold);
-    ASensorEventQueue* _sensorEventQueue{nullptr};
-    ASensorManager* _sensorManager{nullptr};
-    const ASensor* _accelerometer{nullptr};
-    const ASensor* _magnet{nullptr};
-    float lastAcceleration[3]{0, 0, 0};
-    float lastMag[3]{0, 0, 0};
-    float prevAcceleration[3]{0, 0, 0};
-    float prevMag[3]{0, 0, 0};
-    int _displayRotation{0};
-    float _prevHeading{-1.0f};
-    static constexpr float ACCEL_THRESHOLD = 0.5f;
-    static constexpr float MAG_THRESHOLD = 5.0f;
-    static constexpr float HEADING_THRESHOLD = 1.0f;
+    //ASensorEventQueue* _sensorEventQueue{nullptr};
+    //ASensorManager* _sensorManager{nullptr};
+    //const ASensor* _accelerometer{nullptr};
+    //const ASensor* _magnet{nullptr};
 #endif
 
 #ifdef __APPLE__

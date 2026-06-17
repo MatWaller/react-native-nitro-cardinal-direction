@@ -39,13 +39,12 @@ namespace margelo::nitro::nitrocardinaldirection {
    */
   struct SensorData final {
   public:
-    double timestamp     SWIFT_PRIVATE;
-    double heading     SWIFT_PRIVATE;
-    std::string direction     SWIFT_PRIVATE;
+    std::string cardinal     SWIFT_PRIVATE;
+    double degrees     SWIFT_PRIVATE;
 
   public:
     SensorData() = default;
-    explicit SensorData(double timestamp, double heading, std::string direction): timestamp(timestamp), heading(heading), direction(direction) {}
+    explicit SensorData(std::string cardinal, double degrees): cardinal(cardinal), degrees(degrees) {}
 
   public:
     friend bool operator==(const SensorData& lhs, const SensorData& rhs) = default;
@@ -61,16 +60,14 @@ namespace margelo::nitro {
     static inline margelo::nitro::nitrocardinaldirection::SensorData fromJSI(jsi::Runtime& runtime, const jsi::Value& arg) {
       jsi::Object obj = arg.asObject(runtime);
       return margelo::nitro::nitrocardinaldirection::SensorData(
-        JSIConverter<double>::fromJSI(runtime, obj.getProperty(runtime, PropNameIDCache::get(runtime, "timestamp"))),
-        JSIConverter<double>::fromJSI(runtime, obj.getProperty(runtime, PropNameIDCache::get(runtime, "heading"))),
-        JSIConverter<std::string>::fromJSI(runtime, obj.getProperty(runtime, PropNameIDCache::get(runtime, "direction")))
+        JSIConverter<std::string>::fromJSI(runtime, obj.getProperty(runtime, PropNameIDCache::get(runtime, "cardinal"))),
+        JSIConverter<double>::fromJSI(runtime, obj.getProperty(runtime, PropNameIDCache::get(runtime, "degrees")))
       );
     }
     static inline jsi::Value toJSI(jsi::Runtime& runtime, const margelo::nitro::nitrocardinaldirection::SensorData& arg) {
       jsi::Object obj(runtime);
-      obj.setProperty(runtime, PropNameIDCache::get(runtime, "timestamp"), JSIConverter<double>::toJSI(runtime, arg.timestamp));
-      obj.setProperty(runtime, PropNameIDCache::get(runtime, "heading"), JSIConverter<double>::toJSI(runtime, arg.heading));
-      obj.setProperty(runtime, PropNameIDCache::get(runtime, "direction"), JSIConverter<std::string>::toJSI(runtime, arg.direction));
+      obj.setProperty(runtime, PropNameIDCache::get(runtime, "cardinal"), JSIConverter<std::string>::toJSI(runtime, arg.cardinal));
+      obj.setProperty(runtime, PropNameIDCache::get(runtime, "degrees"), JSIConverter<double>::toJSI(runtime, arg.degrees));
       return obj;
     }
     static inline bool canConvert(jsi::Runtime& runtime, const jsi::Value& value) {
@@ -81,9 +78,8 @@ namespace margelo::nitro {
       if (!nitro::isPlainObject(runtime, obj)) {
         return false;
       }
-      if (!JSIConverter<double>::canConvert(runtime, obj.getProperty(runtime, PropNameIDCache::get(runtime, "timestamp")))) return false;
-      if (!JSIConverter<double>::canConvert(runtime, obj.getProperty(runtime, PropNameIDCache::get(runtime, "heading")))) return false;
-      if (!JSIConverter<std::string>::canConvert(runtime, obj.getProperty(runtime, PropNameIDCache::get(runtime, "direction")))) return false;
+      if (!JSIConverter<std::string>::canConvert(runtime, obj.getProperty(runtime, PropNameIDCache::get(runtime, "cardinal")))) return false;
+      if (!JSIConverter<double>::canConvert(runtime, obj.getProperty(runtime, PropNameIDCache::get(runtime, "degrees")))) return false;
       return true;
     }
   };
